@@ -30,7 +30,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: candidate
-        name: Merge the latest upstream stable release
+        name: Merge the latest upstream stable source
         shell: bash
         run: |
           set -euo pipefail
@@ -41,9 +41,23 @@ jobs:
           git fetch --no-tags https://github.com/NousResearch/hermes-agent.git \
             "refs/tags/$tag:refs/upstream/stable"
           upstream=$(git rev-parse 'refs/upstream/stable^{commit}')
-          git -c user.name='github-actions[bot]' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            merge --no-ff --no-edit -m "Merge Hermes upstream $tag" "$upstream"
+          previous=$(cat .hagi-upstream)
+          [[ "$previous" =~ ^[a-f0-9]{40}$ ]]
+          if [[ "$previous" != "$upstream" ]]; then
+            git merge-base --is-ancestor "$previous" "$upstream"
+            # Keep the fork's workflow files under its own authority. Submit
+            # the rest of the upstream release as one three-way squash merge.
+            git diff --binary "$previous" "$upstream" -- . \
+              ':(exclude).github/workflows/**' ':(exclude).hagi-upstream' > "$RUNNER_TEMP/upstream.patch"
+            if [[ -s "$RUNNER_TEMP/upstream.patch" ]]; then
+              git apply --3way --index "$RUNNER_TEMP/upstream.patch"
+            fi
+            printf '%s\n' "$upstream" > .hagi-upstream
+            git add -- .hagi-upstream
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "Merge Hermes source from $tag"
+          fi
           sha=$(git rev-parse HEAD)
           production=$(git ls-remote origin refs/heads/production | cut -f1)
           changed=false
